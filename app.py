@@ -75,14 +75,18 @@ def get_52_week_color(value):
 # Function to sort and filter stocks based on a chosen metric
 def get_top_stocks(matches, metric="Earnings Growth", top_n=6):
     stocks = []
+    seen_stocks = set()  # To track unique stocks and prevent duplication
     for match in matches:
         metadata = match.get("metadata", {})
-        try:
-            value = metadata.get(metric, "N/A")
-            value = float(value.strip('%')) if value != "N/A" else None
-        except ValueError:
-            value = None
-        stocks.append((metadata, value))
+        stock_id = metadata.get("Name")  # Use a unique identifier (e.g., Name)
+        if stock_id not in seen_stocks:  # Only add if not already seen
+            seen_stocks.add(stock_id)
+            try:
+                value = metadata.get(metric, "N/A")
+                value = float(value.strip('%')) if value != "N/A" else None
+            except ValueError:
+                value = None
+            stocks.append((metadata, value))
     sorted_stocks = sorted(stocks, key=lambda x: (x[1] is not None, x[1]), reverse=True)
     return [stock[0] for stock in sorted_stocks[:top_n]]
 
