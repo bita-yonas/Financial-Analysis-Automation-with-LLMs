@@ -3,84 +3,73 @@ from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone
 import yfinance as yf
 import pandas as pd
+from groq import Groq
 import os
 
-# Initialize secrets from Streamlit
-try:
-    pinecone_api_key = st.secrets["PINECONE"]["API_KEY"]
-    pinecone_env = st.secrets["PINECONE"]["ENVIRONMENT"]
-    groq_api_key = st.secrets["GROQ"]["API_KEY"]
-except KeyError as e:
-    st.error(f"Missing secret key: {e}. Please set it in the Streamlit secrets.")
+# Fetch API keys and environment from Streamlit secrets
+pinecone_api_key = st.secrets["PINECONE"]["API_KEY"]
+pinecone_env = st.secrets["PINECONE"]["ENVIRONMENT"]
+groq_api_key = st.secrets["GROQ"]["API_KEY"]
+
+# Initialize Groq
+if not groq_api_key:
+    raise ValueError("GROQ_API_KEY is not set. Please check your Streamlit secrets.")
+groq_client = Groq(api_key=groq_api_key)
 
 # Initialize Pinecone
-try:
-    pc = Pinecone(
-        api_key=pinecone_api_key,
-        environment=pinecone_env
-    )
-except Exception as e:
-    st.error(f"Failed to initialize Pinecone: {e}")
-    raise
+if not pinecone_api_key or not pinecone_env:
+    raise ValueError("PINECONE API_KEY or ENVIRONMENT is not set. Please check your Streamlit secrets.")
+pc = Pinecone(
+    api_key=pinecone_api_key,
+    environment=pinecone_env
+)
 
 # Set the correct index name
 INDEX_NAME = "stocks2"
 namespace = "stock-descriptions"
 
-try:
-    if INDEX_NAME not in pc.list_indexes().names():
-        st.error(f"Index '{INDEX_NAME}' not found. Please ensure the index exists in your Pinecone environment.")
-    else:
-        index = pc.Index(INDEX_NAME)
-except Exception as e:
-    st.error(f"Error accessing Pinecone index: {e}")
-    raise
+if INDEX_NAME not in pc.list_indexes().names():
+    st.error(f"Index '{INDEX_NAME}' not found. Please ensure the index exists in your Pinecone environment.")
+else:
+    index = pc.Index(INDEX_NAME)
 
 # Load SentenceTransformer model
-try:
-    embedding_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
-except Exception as e:
-    st.error(f"Error loading SentenceTransformer model: {e}")
-    raise
+embedding_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
 
 # Function to query stocks from Pinecone
 def query_pinecone(query, namespace="stock-descriptions", top_k=20):
-    try:
-        query_embedding = embedding_model.encode(query).tolist()
-        results = index.query(
-            vector=query_embedding,
-            top_k=top_k,
-            include_metadata=True,
-            namespace=namespace
-        )
-        return results.get("matches", [])
-    except Exception as e:
-        st.error(f"Error querying Pinecone: {e}")
-        return []
+    query_embedding = embedding_model.encode(query).tolist()
+    results = index.query(
+        vector=query_embedding,
+        top_k=top_k,
+        include_metadata=True,
+        namespace=namespace
+    )
+    return results.get("matches", [])
 
 # Function to determine the color for "52 Week Change"
 def get_52_week_color(value):
     if value == "N/A":
-        return "#CCCCCC"
+        return "#CCCCCC"  # Neutral gray for "N/A"
     try:
         value = float(value.strip('%'))
         if value > 0:
-            return "#00FF00"
+            return "#00FF00"  # Green for positive values
         elif value < 0:
-            return "#FF0000"
+            return "#FF0000"  # Red for negative values
     except ValueError:
         pass
-    return "#FFFFFF"
+    return "#FFFFFF"  # Default white for any other case
 
 # Function to sort and filter stocks based on a chosen metric
 def get_top_stocks(matches, metric="Earnings Growth", top_n=6):
     stocks = []
-    seen_stocks = set()  # To track unique stocks and prevent duplication
+    seen_stocks = set()  # Track unique stock names to avoid duplicates
     for match in matches:
         metadata = match.get("metadata", {})
-        stock_id = metadata.get("Name")  # Use a unique identifier (e.g., Name)
-        if stock_id not in seen_stocks:  # Only add if not already seen
-            seen_stocks.add(stock_id)
+        stock_name = metadata.get("Name", None)
+        if stock_name and stock_name not in seen_stocks:  # Avoid duplicates
+            seen_stocks.add(stock_name)
             try:
                 value = metadata.get(metric, "N/A")
                 value = float(value.strip('%')) if value != "N/A" else None
@@ -88,7 +77,7 @@ def get_top_stocks(matches, metric="Earnings Growth", top_n=6):
                 value = None
             stocks.append((metadata, value))
     sorted_stocks = sorted(stocks, key=lambda x: (x[1] is not None, x[1]), reverse=True)
-    return [stock[0] for stock in sorted_stocks[:top_n]]
+    return [stock[0] for stock in sorted_stocks[:top_n]]  # Return top_n metadata
 
 # Function to fetch stock price data
 def fetch_stock_prices(tickers, start_date, end_date):
@@ -96,14 +85,14 @@ def fetch_stock_prices(tickers, start_date, end_date):
         data = yf.download(tickers, start=start_date, end=end_date)["Adj Close"]
         if isinstance(data, pd.Series):
             data = data.to_frame()
-        normalized_data = data / data.iloc[0] * 100
+        normalized_data = data / data.iloc[0] * 100  # Normalize to start at 100%
         return normalized_data
     except Exception as e:
         st.error(f"Error fetching stock data: {e}")
         return None
 
-# Function to generate stock comparison summary
-def generate_stock_summary(stocks_metadata):
+# Function to generate stock comparison summary using Groq
+def generate_groq_summary(stocks_metadata):
     context = ""
     for stock in stocks_metadata:
         name = stock.get('Name', 'Unknown Name')
@@ -121,11 +110,25 @@ def generate_stock_summary(stocks_metadata):
             f"52 Week Change: {week_change}%\n\n"
         )
 
-    return (
-        "Stock Comparison Summary\n\n"
+    prompt = (
+        "You are a financial analyst. Based on the following stock data, generate a professional stock comparison "
+        "summary highlighting strengths, weaknesses, and unique features of each stock:\n\n"
         f"{context}\n"
-        "This summary highlights the strengths and weaknesses of the top stocks based on their metrics."
+        "Provide a clear and concise summary."
     )
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": "You are a financial analysis assistant."},
+                {"role": "user", "content": prompt}
+            ],
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        st.error(f"Error generating Groq summary: {e}")
+        return None
 
 # UI Layout
 st.set_page_config(page_title="Automated Stock Analysis", layout="wide")
@@ -148,10 +151,10 @@ if st.button("Find Stocks"):
                 # Get the top stocks based on the selected metric
                 top_stocks = get_top_stocks(matches, metric=selected_metric, top_n=6)
                 st.write("## Top Relevant Stocks")
-                cols = st.columns(3)
-                for i, metadata in enumerate(top_stocks):
+                cols = st.columns(3)  # Display 3 cards per row
+                for i, metadata in enumerate(top_stocks):  # Limit to top 6 results
                     found_stocks.append(metadata.get("Ticker", "Unknown Ticker"))
-                    with cols[i % 3]:
+                    with cols[i % 3]:  # Wrap around every 3 results
                         st.markdown(
                             f"""
                             <div style="background-color:#111; padding:20px; border-radius:10px; margin-bottom:20px; box-shadow: 0px 4px 10px rgba(0,0,0,0.2);">
@@ -222,7 +225,7 @@ if st.button("Find Stocks"):
 
                 # Stock comparison summary
                 st.markdown("### Stock Comparison Summary")
-                summary = generate_stock_summary(top_stocks)
+                summary = generate_groq_summary(top_stocks)
                 if summary:
                     st.markdown(summary)
 
