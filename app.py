@@ -1,4 +1,3 @@
-
 import streamlit as st
 from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone
@@ -12,36 +11,68 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Initialize Groq
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+groq_api_key = os.getenv("GROQ_API_KEY")
+if not groq_api_key:
+    st.error("GROQ_API_KEY is not set. Please check your environment variables or Streamlit secrets.")
+    raise ValueError("GROQ_API_KEY is missing!")
+
+try:
+    groq_client = Groq(api_key=groq_api_key)
+    st.write("Groq client initialized successfully!")
+except Exception as e:
+    st.error(f"Failed to initialize Groq client: {e}")
+    raise
 
 # Initialize Pinecone
-pc = Pinecone(
-    api_key=os.getenv("PINECONE_API_KEY"),
-    environment="us-east-1"
-)
+pinecone_api_key = os.getenv("PINECONE_API_KEY")
+pinecone_env = os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
+if not pinecone_api_key:
+    st.error("PINECONE_API_KEY is not set. Please check your environment variables or Streamlit secrets.")
+    raise ValueError("PINECONE_API_KEY is missing!")
+
+try:
+    pc = Pinecone(
+        api_key=pinecone_api_key,
+        environment=pinecone_env
+    )
+except Exception as e:
+    st.error(f"Failed to initialize Pinecone: {e}")
+    raise
 
 # Set the correct index name
 INDEX_NAME = "stocks2"
 namespace = "stock-descriptions"
 
-if INDEX_NAME not in pc.list_indexes().names():
-    st.error(f"Index '{INDEX_NAME}' not found. Please ensure the index exists in your Pinecone environment.")
-else:
-    index = pc.Index(INDEX_NAME)
+try:
+    if INDEX_NAME not in pc.list_indexes().names():
+        st.error(f"Index '{INDEX_NAME}' not found. Please ensure the index exists in your Pinecone environment.")
+    else:
+        index = pc.Index(INDEX_NAME)
+except Exception as e:
+    st.error(f"Error accessing Pinecone index: {e}")
+    raise
 
 # Load SentenceTransformer model
-embedding_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+try:
+    embedding_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+except Exception as e:
+    st.error(f"Error loading SentenceTransformer model: {e}")
+    raise
 
 # Function to query stocks from Pinecone
 def query_pinecone(query, namespace="stock-descriptions", top_k=20):
-    query_embedding = embedding_model.encode(query).tolist()
-    results = index.query(
-        vector=query_embedding,
-        top_k=top_k,
-        include_metadata=True,
-        namespace=namespace
-    )
-    return results.get("matches", [])
+    try:
+        query_embedding = embedding_model.encode(query).tolist()
+        results = index.query(
+            vector=query_embedding,
+            top_k=top_k,
+            include_metadata=True,
+            namespace=namespace
+        )
+        return results.get("matches", [])
+    except Exception as e:
+        st.error(f"Error querying Pinecone: {e}")
+        return []
 
 # Function to determine the color for "52 Week Change"
 def get_52_week_color(value):
