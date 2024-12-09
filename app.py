@@ -98,6 +98,31 @@ def fetch_stock_prices(tickers, start_date, end_date):
         st.error(f"Error fetching stock data: {e}")
         return None
 
+# Function to generate stock comparison summary
+def generate_stock_summary(stocks_metadata):
+    context = ""
+    for stock in stocks_metadata:
+        name = stock.get('Name', 'Unknown Name')
+        earnings_growth = stock.get('Earnings Growth', 'N/A')
+        revenue_growth = stock.get('Revenue Growth', 'N/A')
+        gross_margins = stock.get('Gross Margins', 'N/A')
+        ebitda_margins = stock.get('EBITDA Margins', 'N/A')
+        week_change = stock.get('52 Week Change', 'N/A')
+        context += (
+            f"Stock Name: {name}\n"
+            f"Earnings Growth: {earnings_growth}%\n"
+            f"Revenue Growth: {revenue_growth}%\n"
+            f"Gross Margins: {gross_margins}%\n"
+            f"EBITDA Margins: {ebitda_margins}%\n"
+            f"52 Week Change: {week_change}%\n\n"
+        )
+
+    return (
+        "Stock Comparison Summary\n\n"
+        f"{context}\n"
+        "This summary highlights the strengths and weaknesses of the top stocks based on their metrics."
+    )
+
 # UI Layout
 st.set_page_config(page_title="Automated Stock Analysis", layout="wide")
 st.title("Automated Stock Analysis")
@@ -190,6 +215,12 @@ if st.button("Find Stocks"):
                             file_name="stock_prices_comparison.csv",
                             mime="text/csv"
                         )
+
+                # Stock comparison summary
+                st.markdown("### Stock Comparison Summary")
+                summary = generate_stock_summary(top_stocks)
+                if summary:
+                    st.markdown(summary)
 
             else:
                 st.warning("No matching stocks found. Try another query.")
