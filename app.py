@@ -25,7 +25,7 @@ pc = Pinecone(
 )
 
 # Set the correct index name
-INDEX_NAME = "stocks2"
+INDEX_NAME = "stocks"
 namespace = "stock-descriptions"
 
 if INDEX_NAME not in pc.list_indexes().names():
