@@ -3,33 +3,17 @@ from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone
 import yfinance as yf
 import pandas as pd
-from groq import Groq
 import os
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
-
-# Initialize Groq
-groq_api_key = os.getenv("GROQ_API_KEY")
-if not groq_api_key:
-    st.error("GROQ_API_KEY is not set. Please check your environment variables or Streamlit secrets.")
-    raise ValueError("GROQ_API_KEY is missing!")
-
+# Initialize secrets from Streamlit
 try:
-    groq_client = Groq(api_key=groq_api_key)
-    st.write("Groq client initialized successfully!")
-except Exception as e:
-    st.error(f"Failed to initialize Groq client: {e}")
-    raise
+    pinecone_api_key = st.secrets["PINECONE"]["API_KEY"]
+    pinecone_env = st.secrets["PINECONE"]["ENVIRONMENT"]
+    groq_api_key = st.secrets["GROQ"]["API_KEY"]
+except KeyError as e:
+    st.error(f"Missing secret key: {e}. Please set it in the Streamlit secrets.")
 
 # Initialize Pinecone
-pinecone_api_key = os.getenv("PINECONE_API_KEY")
-pinecone_env = os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
-if not pinecone_api_key:
-    st.error("PINECONE_API_KEY is not set. Please check your environment variables or Streamlit secrets.")
-    raise ValueError("PINECONE_API_KEY is missing!")
-
 try:
     pc = Pinecone(
         api_key=pinecone_api_key,
@@ -77,16 +61,16 @@ def query_pinecone(query, namespace="stock-descriptions", top_k=20):
 # Function to determine the color for "52 Week Change"
 def get_52_week_color(value):
     if value == "N/A":
-        return "#CCCCCC"  # Neutral gray for "N/A"
+        return "#CCCCCC"
     try:
         value = float(value.strip('%'))
         if value > 0:
-            return "#00FF00"  # Green for positive values
+            return "#00FF00"
         elif value < 0:
-            return "#FF0000"  # Red for negative values
+            return "#FF0000"
     except ValueError:
         pass
-    return "#FFFFFF"  # Default white for any other case
+    return "#FFFFFF"
 
 # Function to sort and filter stocks based on a chosen metric
 def get_top_stocks(matches, metric="Earnings Growth", top_n=6):
@@ -99,9 +83,8 @@ def get_top_stocks(matches, metric="Earnings Growth", top_n=6):
         except ValueError:
             value = None
         stocks.append((metadata, value))
-    # Sort by the metric (descending), and handle None values by putting them last
     sorted_stocks = sorted(stocks, key=lambda x: (x[1] is not None, x[1]), reverse=True)
-    return [stock[0] for stock in sorted_stocks[:top_n]]  # Return top_n metadata
+    return [stock[0] for stock in sorted_stocks[:top_n]]
 
 # Function to fetch stock price data
 def fetch_stock_prices(tickers, start_date, end_date):
@@ -109,49 +92,10 @@ def fetch_stock_prices(tickers, start_date, end_date):
         data = yf.download(tickers, start=start_date, end=end_date)["Adj Close"]
         if isinstance(data, pd.Series):
             data = data.to_frame()
-        normalized_data = data / data.iloc[0] * 100  # Normalize to start at 100%
+        normalized_data = data / data.iloc[0] * 100
         return normalized_data
     except Exception as e:
         st.error(f"Error fetching stock data: {e}")
-        return None
-
-# Function to generate stock comparison summary using Groq
-def generate_groq_summary(stocks_metadata):
-    context = ""
-    for stock in stocks_metadata:
-        name = stock.get('Name', 'Unknown Name')
-        earnings_growth = stock.get('Earnings Growth', 'N/A')
-        revenue_growth = stock.get('Revenue Growth', 'N/A')
-        gross_margins = stock.get('Gross Margins', 'N/A')
-        ebitda_margins = stock.get('EBITDA Margins', 'N/A')
-        week_change = stock.get('52 Week Change', 'N/A')
-        context += (
-            f"Stock Name: {name}\n"
-            f"Earnings Growth: {earnings_growth}%\n"
-            f"Revenue Growth: {revenue_growth}%\n"
-            f"Gross Margins: {gross_margins}%\n"
-            f"EBITDA Margins: {ebitda_margins}%\n"
-            f"52 Week Change: {week_change}%\n\n"
-        )
-
-    prompt = (
-        "You are a financial analyst. Based on the following stock data, generate a professional stock comparison "
-        "summary highlighting strengths, weaknesses, and unique features of each stock:\n\n"
-        f"{context}\n"
-        "Provide a clear and concise summary."
-    )
-
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": "You are a financial analysis assistant."},
-                {"role": "user", "content": prompt}
-            ],
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        st.error(f"Error generating Groq summary: {e}")
         return None
 
 # UI Layout
@@ -175,10 +119,10 @@ if st.button("Find Stocks"):
                 # Get the top stocks based on the selected metric
                 top_stocks = get_top_stocks(matches, metric=selected_metric, top_n=6)
                 st.write("## Top Relevant Stocks")
-                cols = st.columns(3)  # Display 3 cards per row
-                for i, metadata in enumerate(top_stocks):  # Limit to top 6 results
+                cols = st.columns(3)
+                for i, metadata in enumerate(top_stocks):
                     found_stocks.append(metadata.get("Ticker", "Unknown Ticker"))
-                    with cols[i % 3]:  # Wrap around every 3 results
+                    with cols[i % 3]:
                         st.markdown(
                             f"""
                             <div style="background-color:#111; padding:20px; border-radius:10px; margin-bottom:20px; box-shadow: 0px 4px 10px rgba(0,0,0,0.2);">
@@ -246,12 +190,6 @@ if st.button("Find Stocks"):
                             file_name="stock_prices_comparison.csv",
                             mime="text/csv"
                         )
-
-                # Stock comparison summary
-                st.markdown("### Stock Comparison Summary")
-                summary = generate_groq_summary(top_stocks)
-                if summary:
-                    st.markdown(summary)
 
             else:
                 st.warning("No matching stocks found. Try another query.")
